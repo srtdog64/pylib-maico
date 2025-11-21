@@ -1,3 +1,4 @@
+import time
 from .types import MaicoState, Result, MaicoConfig
 from .errors import MaicoError, ErrorCode, create_error
 
@@ -5,8 +6,8 @@ from .errors import MaicoError, ErrorCode, create_error
 class HardwareSafetyGuards:
     def __init__(self, config: MaicoConfig) -> None:
         self._config = config
-        self._consecutive_errors = 0
-        self._max_consecutive_errors = 3
+        self._last_toggle_time: float = 0.0
+        self._min_toggle_interval: float = 0.5
 
     def check_power_limit(self, power_percent: int) -> Result[bool, MaicoError]:
         if power_percent < 0:
@@ -48,23 +49,33 @@ class HardwareSafetyGuards:
         from_state: MaicoState,
         to_state: MaicoState
     ) -> Result[bool, MaicoError]:
-        dangerous_transitions = [
-            (MaicoState.LASER_OFF, MaicoState.LASER_ON),
-            (MaicoState.LASER_ON, MaicoState.LASER_OFF)
-        ]
-
-        if (from_state, to_state) in dangerous_transitions:
-            if self._consecutive_errors >= self._max_consecutive_errors:
+        is_toggle = {from_state, to_state} == {
+            MaicoState.LASER_OFF,
+            MaicoState.LASER_ON
+        }
+        
+        if is_toggle:
+            now = time.time()
+            elapsed = now - self._last_toggle_time
+            
+            if elapsed < self._min_toggle_interval:
+                remaining = self._min_toggle_interval - elapsed
                 return Result.err(create_error(
                     ErrorCode.SAFETY_GUARD_VIOLATION,
-                    "Too many rapid state changes detected",
-                    consecutive_errors=self._consecutive_errors
+                    "Laser toggled too quickly (Thermal Protection)",
+                    cooldown_remaining_sec=round(remaining, 3),
+                    min_interval_sec=self._min_toggle_interval
                 ))
+            
+            self._last_toggle_time = now
 
         return Result.ok(True)
 
-    def record_error(self) -> None:
-        self._consecutive_errors += 1
-
     def reset_error_count(self) -> None:
-        self._consecutive_errors = 0
+        pass
+
+    def record_error(self) -> None:
+        pass
+
+    def reset_toggle_timer(self) -> None:
+        self._last_toggle_time = 0.0

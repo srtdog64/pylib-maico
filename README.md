@@ -9,6 +9,7 @@ L2 Hardware Abstraction Layer for MAICO Laser Control System via Hamamatsu DCAM-
 ## Key Features
 
 - **Hardware Safe Guards** preventing dangerous state transitions
+- **Thermal Protection** with automatic debounce (500ms cooldown between laser toggles)
 - **FSM-based state management** for predictable operation
 - **Result-pattern error handling** with no exceptions in business logic
 - **ctypes-based wrapper** eliminating external dependencies
@@ -119,7 +120,21 @@ The library implements multiple layers of safety:
 1. **Pre-condition Guards**: Validate all inputs before hardware interaction
 2. **State Transition Guards**: Prevent invalid state changes
 3. **Hardware Limits**: Enforce manufacturer-specified boundaries
-4. **Timeout Protection**: Prevent indefinite blocking operations
+4. **Thermal Protection**: 500ms cooldown between laser ON/OFF transitions
+5. **Timeout Protection**: Prevent indefinite blocking operations
+
+### Thermal Protection Example
+
+```python
+controller.laser_on()
+time.sleep(0.1)  # Too fast!
+result = controller.laser_off()
+# Result.Err: "Laser toggled too quickly (Thermal Protection)"
+# cooldown_remaining_sec: 0.4
+
+time.sleep(0.5)  # Wait for cooldown
+result = controller.laser_off()  # Now succeeds
+```
 
 ## Testing
 
@@ -167,6 +182,12 @@ python examples/basic_usage.py --real
 - No DLL loading required
 - Instant feedback
 - 100% test coverage possible
+
+## Platform Support
+
+- **Windows**: Full hardware support
+- **Linux**: Full hardware support
+- **macOS**: Simulation mode only (DCAM-API not available)
 
 ## License
 

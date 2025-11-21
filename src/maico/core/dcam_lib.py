@@ -17,16 +17,24 @@ class DCAMLib:
 
     def _load_library(self) -> Any:
         system = platform.system()
+        
         try:
             if system == "Windows":
+                if not hasattr(ctypes, 'windll'):
+                    raise OSError("windll not available on this platform")
                 return ctypes.windll.LoadLibrary("dcamapi.dll")
             elif system == "Linux":
                 return ctypes.cdll.LoadLibrary("libdcamapi.so")
+            elif system == "Darwin":
+                raise OSError(
+                    "DCAM-API not available on macOS. "
+                    "Use simulation_mode=True for development."
+                )
             else:
                 raise OSError(f"Unsupported platform: {system}")
-        except OSError as e:
+        except (OSError, AttributeError) as e:
             raise LowLevelError(
-                f"Failed to load DCAM library on {system}",
+                f"Failed to load DCAM library on {system}: {str(e)}",
                 error_code=-1
             ) from e
 

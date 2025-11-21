@@ -1,4 +1,5 @@
 import pytest
+import time
 from maico.guards import HardwareSafetyGuards
 from maico.types import MaicoConfig, MaicoState
 from maico.errors import ErrorCode
@@ -48,26 +49,63 @@ def test_exposure_time_exceeds_limit(guards):
     assert error.code == ErrorCode.SAFETY_GUARD_VIOLATION
 
 
-def test_rapid_state_change_detection(guards):
-    for _ in range(3):
-        guards.record_error()
-    
-    result = guards.check_rapid_state_change(
+def test_rapid_toggle_debounce(guards):
+    result1 = guards.check_rapid_state_change(
         MaicoState.LASER_OFF,
         MaicoState.LASER_ON
     )
-    assert result.is_err()
-    error = result.unwrap_err()
+    assert result1.is_ok()
+    
+    result2 = guards.check_rapid_state_change(
+        MaicoState.LASER_ON,
+        MaicoState.LASER_OFF
+    )
+    assert result2.is_err()
+    error = result2.unwrap_err()
     assert error.code == ErrorCode.SAFETY_GUARD_VIOLATION
+    assert "cooldown_remaining_sec" in error.context
 
 
-def test_error_count_reset(guards):
-    guards.record_error()
-    guards.record_error()
-    guards.reset_error_count()
+def test_rapid_toggle_after_cooldown(guards):
+    result1 = guards.check_rapid_state_change(
+        MaicoState.LASER_OFF,
+        MaicoState.LASER_ON
+    )
+    assert result1.is_ok()
+    
+    time.sleep(0.6)
+    
+    result2 = guards.check_rapid_state_change(
+        MaicoState.LASER_ON,
+        MaicoState.LASER_OFF
+    )
+    assert result2.is_ok()
+
+
+def test_non_toggle_transitions_not_affected(guards):
+    result = guards.check_rapid_state_change(
+        MaicoState.READY,
+        MaicoState.LASER_OFF
+    )
+    assert result.is_ok()
     
     result = guards.check_rapid_state_change(
         MaicoState.LASER_OFF,
+        MaicoState.READY
+    )
+    assert result.is_ok()
+
+
+def test_reset_toggle_timer(guards):
+    guards.check_rapid_state_change(
+        MaicoState.LASER_OFF,
         MaicoState.LASER_ON
+    )
+    
+    guards.reset_toggle_timer()
+    
+    result = guards.check_rapid_state_change(
+        MaicoState.LASER_ON,
+        MaicoState.LASER_OFF
     )
     assert result.is_ok()
