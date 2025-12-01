@@ -4,14 +4,15 @@ from .types import (
     MaicoState,
     MaicoConfig,
     LaserStatus,
+    SubunitStatus,
     TriggerSource,
-    OutputTriggerKind
+    OutputTriggerKind,
 )
 from .errors import MaicoError, ErrorCode, create_error
 from .fsm import MaicoFSM
 from .guards import HardwareSafetyGuards
 from .dcam_wrapper import DCAMWrapper
-from .core import DCAMPropertyID
+from .core import DCAMPropertyID, DCAMSubunitControl
 
 
 class MaicoController:
@@ -22,6 +23,7 @@ class MaicoController:
         self._dcam = DCAMWrapper(simulation_mode=config.simulation_mode)
         self._is_laser_on = False
         self._current_power = 0
+        self._active_subunit_index = 0
 
         self._fsm.add_guard(self._guards.check_rapid_state_change)
         
@@ -44,7 +46,7 @@ class MaicoController:
             self._fsm.force_error_state()
         return result
 
-    def laser_on(self) -> Result[None, MaicoError]:
+    def laser_on(self, subunit_index: int = 0, power_percent: int = 30) -> Result[None, MaicoError]:
         current_state = self._fsm.get_current_state()
         if current_state != MaicoState.LASER_OFF:
             return Result.err(create_error(
@@ -52,6 +54,13 @@ class MaicoController:
                 "Cannot turn laser on from current state",
                 current_state=current_state.name
             ))
+
+        guard_result = self._guards.check_power_limit(power_percent)
+        if guard_result.is_err():
+            return Result.err(guard_result.unwrap_err())
+
+        self._active_subunit_index = subunit_index
+        self._current_power = power_percent
 
         result = self._execute_command("laser_on")
         if result.is_err():
@@ -88,11 +97,15 @@ class MaicoController:
         temp_result = self._dcam.get_sensor_temperature()
         temperature = temp_result.unwrap_or(25.0)
 
+        subunit_statuses = self._get_all_subunit_statuses()
+
         return LaserStatus(
             state=self._fsm.get_current_state(),
             is_laser_on=self._is_laser_on,
+            is_capture_running=self._dcam.is_capture_running(),
             current_power_percent=self._current_power,
             temperature_celsius=temperature,
+            active_subunits=subunit_statuses,
             simulation_mode=self._config.simulation_mode
         )
 
@@ -100,6 +113,13 @@ class MaicoController:
         guard_result = self._guards.check_power_limit(power_percent)
         if guard_result.is_err():
             return Result.err(guard_result.unwrap_err())
+
+        if self._is_laser_on:
+            power_result = self._dcam.set_subunit_laser_power(
+                self._active_subunit_index, power_percent
+            )
+            if power_result.is_err():
+                return power_result
 
         self._current_power = power_percent
         return Result.ok(None)
@@ -164,25 +184,67 @@ class MaicoController:
             DCAMPropertyID.EXPOSURETIME,
             exposure_ms / 1000.0
         )
-        
-        return Result.ok(None) if exposure_result.is_ok() else Result.err(
-            exposure_result.unwrap_err()
-        )
+        if exposure_result.is_err():
+            return Result.err(exposure_result.unwrap_err())
+
+        alloc_result = self._dcam.buf_alloc(self._config.buffer_frame_count)
+        if alloc_result.is_err():
+            return Result.err(alloc_result.unwrap_err())
+
+        return Result.ok(None)
 
     def _execute_laser_on(self) -> Result[None, MaicoError]:
+        if self._dcam.is_capture_running():
+            stop_result = self._dcam.cap_stop()
+            if stop_result.is_err():
+                return Result.err(stop_result.unwrap_err())
+
+        control_check = self._dcam.get_subunit_control(self._active_subunit_index)
+        if control_check.is_err():
+            return Result.err(control_check.unwrap_err())
+
+        if control_check.unwrap() == DCAMSubunitControl.NOT_INSTALLED:
+            return Result.err(create_error(
+                ErrorCode.SUBUNIT_NOT_INSTALLED,
+                "Subunit is not installed",
+                subunit_index=self._active_subunit_index
+            ))
+
+        control_result = self._dcam.set_subunit_control(
+            self._active_subunit_index, DCAMSubunitControl.ON
+        )
+        if control_result.is_err():
+            return Result.err(control_result.unwrap_err())
+
+        power_result = self._dcam.set_subunit_laser_power(
+            self._active_subunit_index, self._current_power
+        )
+        if power_result.is_err():
+            return Result.err(power_result.unwrap_err())
+
         transition_result = self._fsm.transition(MaicoState.LASER_ON)
         if transition_result.is_err():
             return Result.err(transition_result.unwrap_err())
 
-        trigger_result = self._dcam.fire_trigger()
-        if trigger_result.is_err():
+        cap_result = self._dcam.cap_start()
+        if cap_result.is_err():
             self._fsm.force_error_state()
-            return Result.err(trigger_result.unwrap_err())
+            return Result.err(cap_result.unwrap_err())
 
         self._is_laser_on = True
         return Result.ok(None)
 
     def _execute_laser_off(self) -> Result[None, MaicoError]:
+        stop_result = self._dcam.cap_stop()
+        if stop_result.is_err():
+            return Result.err(stop_result.unwrap_err())
+
+        control_result = self._dcam.set_subunit_control(
+            self._active_subunit_index, DCAMSubunitControl.OFF
+        )
+        if control_result.is_err():
+            return Result.err(control_result.unwrap_err())
+
         transition_result = self._fsm.transition(MaicoState.LASER_OFF)
         if transition_result.is_err():
             return Result.err(transition_result.unwrap_err())
@@ -203,3 +265,33 @@ class MaicoController:
         return Result.ok(None) if uninit_result.is_ok() else Result.err(
             uninit_result.unwrap_err()
         )
+
+    def _get_all_subunit_statuses(self) -> tuple[SubunitStatus, ...]:
+        count_result = self._dcam.get_subunit_count()
+        if count_result.is_err():
+            return ()
+
+        subunit_count = count_result.unwrap()
+        statuses = []
+
+        for i in range(subunit_count):
+            control_result = self._dcam.get_subunit_control(i)
+            wavelength_result = self._dcam.get_subunit_wavelength(i)
+            power_result = self._dcam.get_subunit_laser_power(i)
+
+            if control_result.is_err():
+                continue
+
+            control = control_result.unwrap()
+            wavelength = wavelength_result.unwrap_or(0)
+            power = power_result.unwrap_or(0)
+
+            statuses.append(SubunitStatus(
+                index=i,
+                wavelength_nm=wavelength,
+                is_on=(control == DCAMSubunitControl.ON),
+                power_percent=power,
+                is_installed=(control != DCAMSubunitControl.NOT_INSTALLED)
+            ))
+
+        return tuple(statuses)

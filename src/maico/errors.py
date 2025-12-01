@@ -14,6 +14,12 @@ class ErrorCode(Enum):
     TRIGGER_FIRE_FAILED = auto()
     HARDWARE_TIMEOUT = auto()
     BUFFER_ALLOCATION_FAILED = auto()
+    BUFFER_ALLOC_FAILED = auto()
+    BUFFER_RELEASE_FAILED = auto()
+    CAPTURE_START_FAILED = auto()
+    CAPTURE_STOP_FAILED = auto()
+    SUBUNIT_NOT_INSTALLED = auto()
+    SUBUNIT_CONTROL_FAILED = auto()
     SAFETY_GUARD_VIOLATION = auto()
     UNKNOWN_ERROR = auto()
 

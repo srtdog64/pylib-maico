@@ -1,10 +1,10 @@
 [tool.poetry]
 name = "pylib-maico"
-version = "0.1.0"
+version = "0.2.0"
 description = "L2 Hardware Abstraction Layer for MAICO Laser Control System via Hamamatsu DCAM-API"
 authors = ["JDW <your.email@example.com>"]
 readme = "README.md"
-license = "MIT"
+license = "BSD-3-Clause"
 packages = [{include = "maico", from = "src"}]
 
 [tool.poetry.dependencies]

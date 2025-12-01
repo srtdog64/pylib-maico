@@ -1,198 +1,164 @@
 # pylib-maico
 
-L2 Hardware Abstraction Layer for MAICO Laser Control System via Hamamatsu DCAM-API
+MAICO C15890 Laser Controller Library for Python
 
-## Overview
+A production-ready Python library for controlling Hamamatsu MAICO C15890 laser modules via DCAM-API.
 
-`pylib-maico` is a pure Python library providing safe, high-level control over MAICO laser systems through the Hamamatsu DCAM-API. This library implements robust hardware safeguards, FSM-based state management, and Result-pattern error handling.
+## Critical Discovery
 
-## Key Features
+> **SI Code Analysis revealed that `dcamcap_start()` is the key to physical laser output!**
 
-- **Hardware Safe Guards** preventing dangerous state transitions
-- **Thermal Protection** with automatic debounce (500ms cooldown between laser toggles)
-- **FSM-based state management** for predictable operation
-- **Result-pattern error handling** with no exceptions in business logic
-- **ctypes-based wrapper** eliminating external dependencies
-- **Thread-safe operations** using Python's GIL
-- **✨ Simulation Mode** for hardware-independent development
+Simply setting `SUBUNIT_CONTROL` to ON is NOT sufficient to enable laser output. The correct sequence is:
 
-## Design Principles
+1. Set `SUBUNIT_CONTROL` to ON
+2. Set `SUBUNIT_LASERPOWER` to desired value  
+3. Allocate buffer (`buf_alloc`)
+4. **Start capture (`cap_start`)** ← This enables physical laser output!
 
-This library strictly adheres to BSD style coding standards and implements:
-- Guard Clause pattern for input validation
-- Dictionary Dispatch for command handling
-- Maximum 25-line method limit
-- Cyclomatic Complexity ≤ 8
-- No exceptions in business logic layer
+Conversely, calling `cap_stop()` disables the physical laser output.
 
-## Requirements
+## Features
 
-- Python 3.10+
-- Hamamatsu DCAM-API v4.0+ (Windows/Linux) - **Not required for simulation mode**
-- NumPy 1.24+
+- **Result Pattern Error Handling**: No exceptions in business logic
+- **FSM-based State Management**: Safe state transitions with guards
+- **Thermal Protection**: Cooldown enforcement between laser toggles (500ms)
+- **Simulation Mode**: Develop and test without hardware
+- **Clean Architecture**: L1/L2 layer separation
+- **Type Safety**: Full type hints with dataclasses
 
 ## Installation
 
-### Development Mode
-```bash
-poetry install
-```
-
-### Production Mode
 ```bash
 pip install pylib-maico
 ```
 
+Or for development:
+
+```bash
+git clone https://github.com/your-org/pylib-maico.git
+cd pylib-maico
+pip install -e .
+```
+
 ## Quick Start
 
-### Simulation Mode (No Hardware Required)
-
-Perfect for development in cafes, trains, or anywhere without hardware:
-
 ```python
-from maico import MaicoController, MaicoConfig
+from maico import MaicoController, MaicoConfig, TriggerSource
 
 config = MaicoConfig(
     device_index=0,
-    simulation_mode=True  # ← Enable simulation
+    trigger_source=TriggerSource.SOFTWARE,
+    simulation_mode=False,  # Set True for development without hardware
 )
 
 controller = MaicoController(config)
 
-result = controller.initialize()
-if result.is_ok():
-    print("✓ Controller ready (simulation)")
-    controller.laser_on()
-```
-
-### Real Hardware Mode
-
-```python
-from maico import MaicoController, MaicoConfig
-
-config = MaicoConfig(
-    device_index=0,
-    simulation_mode=False
-)
-
-controller = MaicoController(config)
-
+# Initialize
 result = controller.initialize()
 if result.is_err():
-    print(f"Initialization failed: {result.unwrap_err()}")
+    print(f"Init failed: {result.unwrap_err()}")
     exit(1)
 
-result = controller.laser_on()
+# Turn laser ON (subunit 0, 50% power)
+# This internally calls: set_subunit_control(ON) + set_laser_power() + cap_start()
+result = controller.laser_on(subunit_index=0, power_percent=50)
 if result.is_ok():
-    print("Laser activated successfully")
+    print("Laser is now ON - physical output enabled!")
+
+# Get status
+status = controller.get_status()
+print(f"State: {status.state.name}")
+print(f"Capture Running: {status.is_capture_running}")
+print(f"Temperature: {status.temperature_celsius}C")
+
+# Turn laser OFF
+# This internally calls: cap_stop() + set_subunit_control(OFF)
+result = controller.laser_off()
+
+# Shutdown
+controller.shutdown()
 ```
 
-## Architecture
+## API Reference
+
+### MaicoController
+
+| Method | Description |
+|--------|-------------|
+| `initialize()` | Initialize DCAM-API and open device |
+| `laser_on(subunit_index, power_percent)` | Enable subunit + start capture (physical output) |
+| `laser_off()` | Stop capture + disable subunit |
+| `set_power(power_percent)` | Adjust laser power while running |
+| `get_status()` | Get current controller status |
+| `shutdown()` | Clean shutdown (auto laser-off) |
+
+### MaicoConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `device_index` | int | 0 | DCAM device index |
+| `trigger_source` | TriggerSource | SOFTWARE | Trigger source |
+| `simulation_mode` | bool | False | Enable simulation mode |
+| `max_power_percent` | int | 100 | Maximum allowed power |
+| `buffer_frame_count` | int | 3 | Buffer frames for capture |
+
+### LaserStatus
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state` | MaicoState | Current FSM state |
+| `is_laser_on` | bool | Logical laser state |
+| `is_capture_running` | bool | Physical capture state |
+| `current_power_percent` | int | Current power setting |
+| `temperature_celsius` | float | Sensor temperature |
+| `active_subunits` | tuple[SubunitStatus] | Subunit status list |
+
+## State Machine
 
 ```
-pylib-maico/
-├── src/maico/
-│   ├── __init__.py
-│   ├── controller.py      # Main MAICO Controller (L2)
-│   ├── dcam_wrapper.py    # High-level DCAM wrapper
-│   ├── simulation.py      # ✨ Mock hardware for testing
-│   ├── fsm.py            # Finite State Machine
-│   ├── guards.py         # Hardware Safety Guards
-│   ├── types.py          # Result types and enums
-│   ├── errors.py         # Error definitions
-│   └── core/             # Low-level DCAM bindings
-│       ├── dcam_lib.py   # ctypes DLL wrapper
-│       ├── structs.py    # DCAM C structures
-│       └── enums.py      # DCAM constants
-├── tests/
-│   ├── test_controller.py
-│   ├── test_controller_sim.py  # ✨ Simulation tests
-│   ├── test_fsm.py
-│   └── test_guards.py
-└── docs/
-    └── API.md
+UNINITIALIZED → INITIALIZED → READY → LASER_OFF ⇄ LASER_ON
+                                          ↓
+                                      SHUTDOWN
 ```
 
-## Safety Features
+## Simulation Mode
 
-The library implements multiple layers of safety:
-
-1. **Pre-condition Guards**: Validate all inputs before hardware interaction
-2. **State Transition Guards**: Prevent invalid state changes
-3. **Hardware Limits**: Enforce manufacturer-specified boundaries
-4. **Thermal Protection**: 500ms cooldown between laser ON/OFF transitions
-5. **Timeout Protection**: Prevent indefinite blocking operations
-
-### Thermal Protection Example
+For development without hardware:
 
 ```python
-controller.laser_on()
-time.sleep(0.1)  # Too fast!
-result = controller.laser_off()
-# Result.Err: "Laser toggled too quickly (Thermal Protection)"
-# cooldown_remaining_sec: 0.4
+config = MaicoConfig(simulation_mode=True)
+controller = MaicoController(config)
 
-time.sleep(0.5)  # Wait for cooldown
-result = controller.laser_off()  # Now succeeds
+# All operations work in simulation mode
+controller.initialize()
+controller.laser_on(subunit_index=0, power_percent=50)
+status = controller.get_status()  # Returns simulated data
+```
+
+## Error Handling
+
+```python
+result = controller.laser_on(subunit_index=0, power_percent=150)
+
+if result.is_err():
+    error = result.unwrap_err()
+    print(f"Error: {error.code.name}")
+    print(f"Message: {error.message}")
+    if error.context:
+        print(f"Context: {error.context}")
 ```
 
 ## Testing
 
-### Run all tests (including simulation)
 ```bash
-poetry run pytest
+pytest tests/ -v
 ```
-
-### Run only simulation tests
-```bash
-poetry run pytest tests/test_controller_sim.py
-```
-
-### Run hardware tests (requires DCAM-API)
-```bash
-poetry run pytest tests/test_controller.py
-```
-
-## Development Workflow
-
-### Without Hardware (Recommended)
-```bash
-# Develop and test business logic
-poetry run pytest tests/test_controller_sim.py
-
-# Run example in simulation mode
-python examples/basic_usage.py
-```
-
-### With Hardware
-```bash
-# Test against real hardware
-python examples/basic_usage.py --real
-```
-
-## Why Simulation Mode?
-
-**Problem**: MAICO hardware is expensive and not portable. How do you develop:
-- In a cafe?
-- On a train?
-- At home without hardware?
-
-**Solution**: `simulation_mode=True`
-- Full FSM and safety guard validation
-- No DLL loading required
-- Instant feedback
-- 100% test coverage possible
-
-## Platform Support
-
-- **Windows**: Full hardware support
-- **Linux**: Full hardware support
-- **macOS**: Simulation mode only (DCAM-API not available)
 
 ## License
 
-MIT License - See LICENSE file for details
+BSD 3-Clause License
 
-## Contributing
+## Version History
 
-Please follow BSD coding style and ensure all tests pass before submitting PRs.
+- **v0.2.0**: Added `cap_start`/`cap_stop` sequence for physical laser output
+- **v0.1.0**: Initial release with basic FSM and simulation mode

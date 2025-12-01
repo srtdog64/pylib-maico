@@ -1,6 +1,6 @@
 from typing import TypeVar, Generic, Union
 from enum import IntEnum, auto
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 T = TypeVar('T')
@@ -67,6 +67,13 @@ class OutputTriggerKind(IntEnum):
 
 
 @dataclass(frozen=True)
+class SubunitConfig:
+    index: int
+    power_percent: int = 30
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
 class MaicoConfig:
     device_index: int = 0
     trigger_source: TriggerSource = TriggerSource.SOFTWARE
@@ -75,13 +82,28 @@ class MaicoConfig:
     max_power_percent: int = 100
     safety_timeout_ms: int = 5000
     simulation_mode: bool = False
+    subunits: tuple[SubunitConfig, ...] = field(default_factory=lambda: (
+        SubunitConfig(index=0, power_percent=30),
+    ))
+    buffer_frame_count: int = 3
+
+
+@dataclass(frozen=True)
+class SubunitStatus:
+    index: int
+    wavelength_nm: int
+    is_on: bool
+    power_percent: int
+    is_installed: bool
 
 
 @dataclass(frozen=True)
 class LaserStatus:
     state: MaicoState
     is_laser_on: bool
+    is_capture_running: bool
     current_power_percent: int
     temperature_celsius: float
+    active_subunits: tuple[SubunitStatus, ...] = ()
     simulation_mode: bool = False
     last_error: str | None = None

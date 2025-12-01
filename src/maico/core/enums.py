@@ -2,7 +2,7 @@ from enum import IntEnum
 
 
 def _int32(value: int) -> int:
-    if value & (1 << 31):
+    if value &amp; (1 << 31):
         value -= 1 << 32
     return value
 
@@ -55,6 +55,15 @@ class DCAMPropertyID(IntEnum):
     SENSORCOOLER = 0x00200320
     SENSORTEMPERATURETARGET = 0x00200330
     READOUTSPEED = 0x00400110
+    MECHANICALSHUTTER = 0x001E0110
+    NUMBEROF_SUBUNIT = 0x030000F0
+    SUBUNIT_CONTROL = 0x03000010
+    SUBUNIT_LASERPOWER = 0x03000030
+    SUBUNIT_PMTGAIN = 0x03000040
+    SUBUNIT_WAVELENGTH = 0x03000050
+
+
+SUBUNIT_OFFSET = 0x10
 
 
 class DCAMTriggerSource(IntEnum):
@@ -75,3 +84,19 @@ class DCAMOutputTriggerKind(IntEnum):
     PROGRAMABLE = 3
     TRIGGER_READY = 4
     HIGH = 5
+
+
+class DCAMCaptureMode(IntEnum):
+    SNAP = 0
+    SEQUENCE = 1
+
+
+class DCAMSubunitControl(IntEnum):
+    NOT_INSTALLED = 0
+    OFF = 1
+    ON = 2
+
+
+class DCAMShutterState(IntEnum):
+    CLOSE = 2
+    OPEN = 3

@@ -66,6 +66,18 @@ class DCAMLib:
     def dcamcap_firetrigger(self, hdcam: Any) -> int:
         return self._dcamapi.dcamcap_firetrigger(hdcam, ctypes.c_int32(0))
 
+    def dcambuf_alloc(self, hdcam: Any, frame_count: int) -> int:
+        return self._dcamapi.dcambuf_alloc(hdcam, ctypes.c_int32(frame_count))
+
+    def dcambuf_release(self, hdcam: Any) -> int:
+        return self._dcamapi.dcambuf_release(hdcam, ctypes.c_int32(0))
+
+    def dcamcap_start(self, hdcam: Any, mode: int) -> int:
+        return self._dcamapi.dcamcap_start(hdcam, ctypes.c_int32(mode))
+
+    def dcamcap_stop(self, hdcam: Any) -> int:
+        return self._dcamapi.dcamcap_stop(hdcam)
+
     def dcamwait_open(self, hdcam: Any) -> tuple[int, Any]:
         from .structs import DCAMWAIT_OPEN
         param = DCAMWAIT_OPEN()

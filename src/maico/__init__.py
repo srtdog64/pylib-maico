@@ -4,12 +4,15 @@ from .types import (
     MaicoState,
     MaicoConfig,
     LaserStatus,
+    SubunitStatus,
+    SubunitConfig,
     TriggerSource,
-    OutputTriggerKind
+    OutputTriggerKind,
 )
 from .errors import MaicoError, ErrorCode
+from .core import DCAMSubunitControl, DCAMCaptureMode
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "MaicoController",
@@ -17,8 +20,12 @@ __all__ = [
     "MaicoState",
     "MaicoConfig",
     "LaserStatus",
+    "SubunitStatus",
+    "SubunitConfig",
     "TriggerSource",
     "OutputTriggerKind",
     "MaicoError",
     "ErrorCode",
+    "DCAMSubunitControl",
+    "DCAMCaptureMode",
 ]

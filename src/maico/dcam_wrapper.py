@@ -1,8 +1,17 @@
 from typing import Any
 from .types import Result
 from .errors import MaicoError, ErrorCode, create_error
-from .core import DCAMLib, DCAMAPI_INIT, DCAMDEV_OPEN, DCAMERR, DCAMPropertyID
-from .core.dcam_lib import LowLevelError
+from .core import (
+    DCAMLib,
+    DCAMAPI_INIT,
+    DCAMDEV_OPEN,
+    DCAMERR,
+    DCAMPropertyID,
+    DCAMCaptureMode,
+    DCAMSubunitControl,
+    SUBUNIT_OFFSET,
+    LowLevelError,
+)
 from .simulation import SimulationLib
 
 
@@ -12,6 +21,8 @@ class DCAMWrapper:
         self._lib: Any = None
         self._hdcam: Any = None
         self._is_initialized = False
+        self._buffer_allocated = False
+        self._capture_running = False
         self._initialize_library()
 
     def _initialize_library(self) -> None:
@@ -20,7 +31,7 @@ class DCAMWrapper:
                 self._lib = SimulationLib()
             else:
                 self._lib = DCAMLib()
-        except LowLevelError as e:
+        except LowLevelError:
             self._lib = None
 
     def _check_status(self, error_code: int) -> Result[None, MaicoError]:
@@ -97,6 +108,12 @@ class DCAMWrapper:
         if self._hdcam is None:
             return Result.ok(None)
 
+        if self._capture_running:
+            self.cap_stop()
+
+        if self._buffer_allocated:
+            self.buf_release()
+
         result = self._lib.dcamdev_close(self._hdcam)
         self._hdcam = None
         return self._check_status(result)
@@ -158,5 +175,154 @@ class DCAMWrapper:
 
         return Result.ok(None)
 
+    def buf_alloc(self, frame_count: int = 3) -> Result[None, MaicoError]:
+        if self._hdcam is None:
+            return Result.err(create_error(
+                ErrorCode.DEVICE_NOT_FOUND,
+                "Device not opened"
+            ))
+
+        if self._buffer_allocated:
+            release_result = self.buf_release()
+            if release_result.is_err():
+                return release_result
+
+        result = self._lib.dcambuf_alloc(self._hdcam, frame_count)
+        
+        if result != DCAMERR.SUCCESS:
+            return Result.err(create_error(
+                ErrorCode.BUFFER_ALLOC_FAILED,
+                "Failed to allocate image buffer",
+                frame_count=frame_count,
+                dcam_error=result
+            ))
+
+        self._buffer_allocated = True
+        return Result.ok(None)
+
+    def buf_release(self) -> Result[None, MaicoError]:
+        if self._hdcam is None:
+            return Result.err(create_error(
+                ErrorCode.DEVICE_NOT_FOUND,
+                "Device not opened"
+            ))
+
+        if not self._buffer_allocated:
+            return Result.ok(None)
+
+        result = self._lib.dcambuf_release(self._hdcam)
+        
+        if result != DCAMERR.SUCCESS:
+            return Result.err(create_error(
+                ErrorCode.BUFFER_RELEASE_FAILED,
+                "Failed to release image buffer",
+                dcam_error=result
+            ))
+
+        self._buffer_allocated = False
+        return Result.ok(None)
+
+    def cap_start(
+        self, mode: DCAMCaptureMode = DCAMCaptureMode.SEQUENCE
+    ) -> Result[None, MaicoError]:
+        if self._hdcam is None:
+            return Result.err(create_error(
+                ErrorCode.DEVICE_NOT_FOUND,
+                "Device not opened"
+            ))
+
+        if not self._buffer_allocated:
+            alloc_result = self.buf_alloc()
+            if alloc_result.is_err():
+                return alloc_result
+
+        result = self._lib.dcamcap_start(self._hdcam, mode.value)
+        
+        if result != DCAMERR.SUCCESS:
+            return Result.err(create_error(
+                ErrorCode.CAPTURE_START_FAILED,
+                "Failed to start capture",
+                mode=mode.name,
+                dcam_error=result
+            ))
+
+        self._capture_running = True
+        return Result.ok(None)
+
+    def cap_stop(self) -> Result[None, MaicoError]:
+        if self._hdcam is None:
+            return Result.err(create_error(
+                ErrorCode.DEVICE_NOT_FOUND,
+                "Device not opened"
+            ))
+
+        if not self._capture_running:
+            return Result.ok(None)
+
+        result = self._lib.dcamcap_stop(self._hdcam)
+        
+        if result != DCAMERR.SUCCESS:
+            return Result.err(create_error(
+                ErrorCode.CAPTURE_STOP_FAILED,
+                "Failed to stop capture",
+                dcam_error=result
+            ))
+
+        self._capture_running = False
+        return Result.ok(None)
+
+    def set_subunit_control(
+        self, subunit_index: int, control: DCAMSubunitControl
+    ) -> Result[None, MaicoError]:
+        prop_id = DCAMPropertyID.SUBUNIT_CONTROL + (SUBUNIT_OFFSET * subunit_index)
+        return self.set_property(prop_id, float(control.value))
+
+    def get_subunit_control(self, subunit_index: int) -> Result[DCAMSubunitControl, MaicoError]:
+        prop_id = DCAMPropertyID.SUBUNIT_CONTROL + (SUBUNIT_OFFSET * subunit_index)
+        result = self.get_property(prop_id)
+        
+        if result.is_err():
+            return Result.err(result.unwrap_err())
+
+        return Result.ok(DCAMSubunitControl(int(result.unwrap())))
+
+    def set_subunit_laser_power(
+        self, subunit_index: int, power: int
+    ) -> Result[None, MaicoError]:
+        prop_id = DCAMPropertyID.SUBUNIT_LASERPOWER + (SUBUNIT_OFFSET * subunit_index)
+        return self.set_property(prop_id, float(power))
+
+    def get_subunit_laser_power(self, subunit_index: int) -> Result[int, MaicoError]:
+        prop_id = DCAMPropertyID.SUBUNIT_LASERPOWER + (SUBUNIT_OFFSET * subunit_index)
+        result = self.get_property(prop_id)
+        
+        if result.is_err():
+            return Result.err(result.unwrap_err())
+
+        return Result.ok(int(result.unwrap()))
+
+    def get_subunit_wavelength(self, subunit_index: int) -> Result[int, MaicoError]:
+        prop_id = DCAMPropertyID.SUBUNIT_WAVELENGTH + (SUBUNIT_OFFSET * subunit_index)
+        result = self.get_property(prop_id)
+        
+        if result.is_err():
+            return Result.err(result.unwrap_err())
+
+        return Result.ok(int(result.unwrap()))
+
+    def get_subunit_count(self) -> Result[int, MaicoError]:
+        result = self.get_property(DCAMPropertyID.NUMBEROF_SUBUNIT)
+        
+        if result.is_err():
+            return Result.err(result.unwrap_err())
+
+        return Result.ok(int(result.unwrap()))
+
     def get_sensor_temperature(self) -> Result[float, MaicoError]:
         return self.get_property(DCAMPropertyID.SENSORTEMPERATURE)
+
+    def is_capture_running(self) -> bool:
+        return self._capture_running
+
+    def is_buffer_allocated(self) -> bool:
+        return self._buffer_allocated

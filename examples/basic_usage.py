@@ -1,85 +1,112 @@
-from maico import MaicoController, MaicoConfig, TriggerSource, OutputTriggerKind
+#!/usr/bin/env python3
+"""pylib-maico Basic Usage Example
+
+Demonstrates the complete laser control sequence for MAICO C15890.
+
+Key Discovery from SI Code Analysis:
+    The MAICO hardware requires cap_start() to physically enable laser output.
+    Simply setting SUBUNIT_CONTROL to ON is not sufficient.
+    
+    Correct sequence:
+    1. Set SUBUNIT_CONTROL to ON
+    2. Set SUBUNIT_LASERPOWER to desired value
+    3. Allocate buffer (buf_alloc)
+    4. Start capture (cap_start) ← This enables physical laser output!
+"""
+
+from maico import (
+    MaicoController,
+    MaicoConfig,
+    TriggerSource,
+    OutputTriggerKind,
+    SubunitConfig,
+)
 
 
-def main_real_hardware():
-    print("=== Real Hardware Mode ===")
+def main() -> None:
     config = MaicoConfig(
         device_index=0,
         trigger_source=TriggerSource.SOFTWARE,
         output_trigger_kind=OutputTriggerKind.EXPOSURE,
         exposure_time_ms=10.0,
-        max_power_percent=80,
-        simulation_mode=False
+        max_power_percent=100,
+        simulation_mode=True,
+        buffer_frame_count=3,
+        subunits=(
+            SubunitConfig(index=0, power_percent=30),
+        ),
     )
     
-    run_demo(config)
-
-
-def main_simulation():
-    print("=== Simulation Mode ===")
-    config = MaicoConfig(
-        device_index=0,
-        trigger_source=TriggerSource.SOFTWARE,
-        output_trigger_kind=OutputTriggerKind.EXPOSURE,
-        exposure_time_ms=10.0,
-        max_power_percent=80,
-        simulation_mode=True
-    )
-    
-    run_demo(config)
-
-
-def run_demo(config: MaicoConfig):
     controller = MaicoController(config)
     
+    print("=== MAICO Controller Example ===\n")
+    
+    print("[1] Initializing controller...")
     init_result = controller.initialize()
     if init_result.is_err():
-        print(f"Initialization failed: {init_result.unwrap_err()}")
+        print(f"    [FAIL] {init_result.unwrap_err()}")
         return
-    
-    print("✓ Controller initialized successfully")
-    
-    power_result = controller.set_power(50)
-    if power_result.is_err():
-        print(f"Failed to set power: {power_result.unwrap_err()}")
-        return
-    
-    print("✓ Power set to 50%")
+    print("    [OK] Controller initialized")
     
     status = controller.get_status()
-    print(f"Current state: {status.state.name}")
-    print(f"Temperature: {status.temperature_celsius}°C")
-    print(f"Simulation mode: {status.simulation_mode}")
+    print(f"\n[2] Initial Status:")
+    print(f"    State: {status.state.name}")
+    print(f"    Laser ON: {status.is_laser_on}")
+    print(f"    Capture Running: {status.is_capture_running}")
+    print(f"    Temperature: {status.temperature_celsius}C")
+    print(f"    Simulation Mode: {status.simulation_mode}")
     
-    laser_on_result = controller.laser_on()
-    if laser_on_result.is_err():
-        print(f"Failed to activate laser: {laser_on_result.unwrap_err()}")
-        return
+    if status.active_subunits:
+        print(f"    Subunits ({len(status.active_subunits)}):")
+        for su in status.active_subunits:
+            state = "ON" if su.is_on else "OFF"
+            installed = "Installed" if su.is_installed else "Not Installed"
+            print(f"      [{su.index}] {su.wavelength_nm}nm - {state} - Power: {su.power_percent}% - {installed}")
     
-    print("✓ Laser activated")
+    print("\n[3] Turning laser ON (subunit 0, power 50%)...")
+    on_result = controller.laser_on(subunit_index=0, power_percent=50)
+    if on_result.is_err():
+        print(f"    [FAIL] {on_result.unwrap_err()}")
+    else:
+        print("    [OK] Laser is now ON")
+        print("    [INFO] cap_start() was called - physical laser output enabled!")
     
-    import time
-    time.sleep(2)
+    status = controller.get_status()
+    print(f"\n[4] Status After Laser ON:")
+    print(f"    State: {status.state.name}")
+    print(f"    Laser ON: {status.is_laser_on}")
+    print(f"    Capture Running: {status.is_capture_running}")
     
-    laser_off_result = controller.laser_off()
-    if laser_off_result.is_err():
-        print(f"Failed to deactivate laser: {laser_off_result.unwrap_err()}")
-        return
+    print("\n[5] Adjusting power to 75%...")
+    power_result = controller.set_power(75)
+    if power_result.is_err():
+        print(f"    [FAIL] {power_result.unwrap_err()}")
+    else:
+        print("    [OK] Power adjusted to 75%")
     
-    print("✓ Laser deactivated")
+    print("\n[6] Turning laser OFF...")
+    off_result = controller.laser_off()
+    if off_result.is_err():
+        print(f"    [FAIL] {off_result.unwrap_err()}")
+    else:
+        print("    [OK] Laser is now OFF")
+        print("    [INFO] cap_stop() was called - physical laser output disabled!")
     
+    status = controller.get_status()
+    print(f"\n[7] Status After Laser OFF:")
+    print(f"    State: {status.state.name}")
+    print(f"    Laser ON: {status.is_laser_on}")
+    print(f"    Capture Running: {status.is_capture_running}")
+    
+    print("\n[8] Shutting down...")
     shutdown_result = controller.shutdown()
     if shutdown_result.is_err():
-        print(f"Shutdown failed: {shutdown_result.unwrap_err()}")
-        return
+        print(f"    [FAIL] {shutdown_result.unwrap_err()}")
+    else:
+        print("    [OK] Controller shut down")
     
-    print("✓ Controller shutdown successfully")
+    print("\n=== Example Complete ===")
 
 
 if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) > 1 and sys.argv[1] == "--real":
-        main_real_hardware()
-    else:
-        main_simulation()
+    main()
