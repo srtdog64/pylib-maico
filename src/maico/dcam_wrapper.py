@@ -9,6 +9,8 @@ from .core import (
     DCAMPropertyID,
     DCAMCaptureMode,
     DCAMSubunitControl,
+    DCAMScanMode,
+    DCAMFrameAveraging,
     SUBUNIT_OFFSET,
     LowLevelError,
 )
@@ -326,3 +328,115 @@ class DCAMWrapper:
 
     def is_buffer_allocated(self) -> bool:
         return self._buffer_allocated
+
+    # --- PMT Gain ---
+
+    def set_subunit_pmt_gain(
+        self, subunit_index: int, gain: float
+    ) -> Result[None, MaicoError]:
+        if gain < 0.5 or gain > 0.9:
+            return Result.err(create_error(
+                ErrorCode.INVALID_PARAMETER,
+                "PMT gain must be between 0.5 and 0.9",
+                gain=gain
+            ))
+        prop_id = DCAMPropertyID.SUBUNIT_PMTGAIN + (SUBUNIT_OFFSET * subunit_index)
+        return self.set_property(prop_id, gain)
+
+    def get_subunit_pmt_gain(self, subunit_index: int) -> Result[float, MaicoError]:
+        prop_id = DCAMPropertyID.SUBUNIT_PMTGAIN + (SUBUNIT_OFFSET * subunit_index)
+        return self.get_property(prop_id)
+
+    # --- Confocal Scan Configuration ---
+
+    def set_scan_mode(self, mode: DCAMScanMode) -> Result[None, MaicoError]:
+        return self.set_property(DCAMPropertyID.CONFOCAL_SCANMODE, float(mode.value))
+
+    def get_scan_mode(self) -> Result[DCAMScanMode, MaicoError]:
+        result = self.get_property(DCAMPropertyID.CONFOCAL_SCANMODE)
+        if result.is_err():
+            return Result.err(result.unwrap_err())
+        return Result.ok(DCAMScanMode(int(result.unwrap())))
+
+    def set_scan_lines(self, lines: int) -> Result[None, MaicoError]:
+        if lines not in (240, 480, 960):
+            return Result.err(create_error(
+                ErrorCode.INVALID_PARAMETER,
+                "Scan lines must be 240, 480, or 960",
+                lines=lines
+            ))
+        return self.set_property(DCAMPropertyID.CONFOCAL_SCANLINES, float(lines))
+
+    def get_scan_lines(self) -> Result[int, MaicoError]:
+        result = self.get_property(DCAMPropertyID.CONFOCAL_SCANLINES)
+        if result.is_err():
+            return Result.err(result.unwrap_err())
+        return Result.ok(int(result.unwrap()))
+
+    def set_zoom(self, zoom: int) -> Result[None, MaicoError]:
+        if zoom not in (1, 2):
+            return Result.err(create_error(
+                ErrorCode.INVALID_PARAMETER,
+                "Zoom must be 1 or 2",
+                zoom=zoom
+            ))
+        return self.set_property(DCAMPropertyID.CONFOCAL_ZOOM, float(zoom))
+
+    def get_zoom(self) -> Result[int, MaicoError]:
+        result = self.get_property(DCAMPropertyID.CONFOCAL_ZOOM)
+        if result.is_err():
+            return Result.err(result.unwrap_err())
+        return Result.ok(int(result.unwrap()))
+
+    # --- Binning ---
+
+    def set_binning(self, binning: int) -> Result[None, MaicoError]:
+        if binning not in (1, 2):
+            return Result.err(create_error(
+                ErrorCode.INVALID_PARAMETER,
+                "Binning must be 1 or 2",
+                binning=binning
+            ))
+        return self.set_property(DCAMPropertyID.BINNING, float(binning))
+
+    def get_binning(self) -> Result[int, MaicoError]:
+        result = self.get_property(DCAMPropertyID.BINNING)
+        if result.is_err():
+            return Result.err(result.unwrap_err())
+        return Result.ok(int(result.unwrap()))
+
+    # --- Frame Averaging ---
+
+    def set_frame_averaging(
+        self, enable: bool, frames: int = 2
+    ) -> Result[None, MaicoError]:
+        mode = DCAMFrameAveraging.ON if enable else DCAMFrameAveraging.OFF
+        mode_result = self.set_property(
+            DCAMPropertyID.FRAMEAVERAGINGMODE, float(mode.value)
+        )
+        if mode_result.is_err():
+            return mode_result
+
+        if enable:
+            if frames < 2 or frames > 1024:
+                return Result.err(create_error(
+                    ErrorCode.INVALID_PARAMETER,
+                    "Frame averaging frames must be between 2 and 1024",
+                    frames=frames
+                ))
+            return self.set_property(
+                DCAMPropertyID.FRAMEAVERAGINGFRAMES, float(frames)
+            )
+        return Result.ok(None)
+
+    def get_frame_averaging(self) -> Result[tuple[bool, int], MaicoError]:
+        mode_result = self.get_property(DCAMPropertyID.FRAMEAVERAGINGMODE)
+        if mode_result.is_err():
+            return Result.err(mode_result.unwrap_err())
+
+        enabled = int(mode_result.unwrap()) == DCAMFrameAveraging.ON
+
+        frames_result = self.get_property(DCAMPropertyID.FRAMEAVERAGINGFRAMES)
+        frames = int(frames_result.unwrap_or(2))
+
+        return Result.ok((enabled, frames))

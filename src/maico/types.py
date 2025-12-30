@@ -94,7 +94,18 @@ class SubunitStatus:
     wavelength_nm: int
     is_on: bool
     power_percent: int
+    pmt_gain: float
     is_installed: bool
+
+
+@dataclass(frozen=True)
+class ScanConfig:
+    mode: str  # "sequential" or "simultaneous"
+    lines: int  # 240, 480, 960
+    zoom: int  # 1 or 2
+    binning: int  # 1 or 2
+    frame_averaging_enabled: bool
+    frame_averaging_frames: int  # 2-1024
 
 
 @dataclass(frozen=True)

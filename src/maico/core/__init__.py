@@ -6,6 +6,8 @@ from .enums import (
     DCAMCaptureMode,
     DCAMSubunitControl,
     DCAMShutterState,
+    DCAMScanMode,
+    DCAMFrameAveraging,
     SUBUNIT_OFFSET,
 )
 
@@ -19,5 +21,7 @@ __all__ = [
     "DCAMCaptureMode",
     "DCAMSubunitControl",
     "DCAMShutterState",
+    "DCAMScanMode",
+    "DCAMFrameAveraging",
     "SUBUNIT_OFFSET",
 ]

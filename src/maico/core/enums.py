@@ -61,6 +61,14 @@ class DCAMPropertyID(IntEnum):
     SUBUNIT_LASERPOWER = 0x03000030
     SUBUNIT_PMTGAIN = 0x03000040
     SUBUNIT_WAVELENGTH = 0x03000050
+    # Confocal scanner properties
+    CONFOCAL_SCANMODE = 0x00410110
+    CONFOCAL_SCANLINES = 0x00410120
+    CONFOCAL_ZOOM = 0x00410130
+    # Image properties
+    BINNING = 0x00401110
+    FRAMEAVERAGINGMODE = 0x00401810
+    FRAMEAVERAGINGFRAMES = 0x00401820
 
 
 SUBUNIT_OFFSET = 0x10
@@ -100,3 +108,13 @@ class DCAMSubunitControl(IntEnum):
 class DCAMShutterState(IntEnum):
     CLOSE = 2
     OPEN = 3
+
+
+class DCAMScanMode(IntEnum):
+    SEQUENTIAL = 1
+    SIMULTANEOUS = 2
+
+
+class DCAMFrameAveraging(IntEnum):
+    OFF = 1
+    ON = 2

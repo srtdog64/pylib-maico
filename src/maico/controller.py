@@ -5,6 +5,7 @@ from .types import (
     MaicoConfig,
     LaserStatus,
     SubunitStatus,
+    ScanConfig,
     TriggerSource,
     OutputTriggerKind,
 )
@@ -12,7 +13,7 @@ from .errors import MaicoError, ErrorCode, create_error
 from .fsm import MaicoFSM
 from .guards import HardwareSafetyGuards
 from .dcam_wrapper import DCAMWrapper
-from .core import DCAMPropertyID, DCAMSubunitControl
+from .core import DCAMPropertyID, DCAMSubunitControl, DCAMScanMode
 
 
 class MaicoController:
@@ -122,6 +123,65 @@ class MaicoController:
                 return power_result
 
         self._current_power = power_percent
+        return Result.ok(None)
+
+    def set_pmt_gain(
+        self, subunit_index: int, gain: float
+    ) -> Result[None, MaicoError]:
+        return self._dcam.set_subunit_pmt_gain(subunit_index, gain)
+
+    def get_scan_config(self) -> Result[ScanConfig, MaicoError]:
+        mode_result = self._dcam.get_scan_mode()
+        if mode_result.is_err():
+            return Result.err(mode_result.unwrap_err())
+
+        lines_result = self._dcam.get_scan_lines()
+        zoom_result = self._dcam.get_zoom()
+        binning_result = self._dcam.get_binning()
+        avg_result = self._dcam.get_frame_averaging()
+
+        mode = mode_result.unwrap()
+        mode_str = "sequential" if mode == DCAMScanMode.SEQUENTIAL else "simultaneous"
+
+        return Result.ok(ScanConfig(
+            mode=mode_str,
+            lines=lines_result.unwrap_or(480),
+            zoom=zoom_result.unwrap_or(1),
+            binning=binning_result.unwrap_or(1),
+            frame_averaging_enabled=avg_result.unwrap_or((False, 2))[0],
+            frame_averaging_frames=avg_result.unwrap_or((False, 2))[1],
+        ))
+
+    def set_scan_config(self, config: ScanConfig) -> Result[None, MaicoError]:
+        mode = (
+            DCAMScanMode.SEQUENTIAL
+            if config.mode == "sequential"
+            else DCAMScanMode.SIMULTANEOUS
+        )
+
+        mode_result = self._dcam.set_scan_mode(mode)
+        if mode_result.is_err():
+            return mode_result
+
+        lines_result = self._dcam.set_scan_lines(config.lines)
+        if lines_result.is_err():
+            return lines_result
+
+        zoom_result = self._dcam.set_zoom(config.zoom)
+        if zoom_result.is_err():
+            return zoom_result
+
+        binning_result = self._dcam.set_binning(config.binning)
+        if binning_result.is_err():
+            return binning_result
+
+        avg_result = self._dcam.set_frame_averaging(
+            config.frame_averaging_enabled,
+            config.frame_averaging_frames
+        )
+        if avg_result.is_err():
+            return avg_result
+
         return Result.ok(None)
 
     def _execute_command(self, command: str) -> Result[None, MaicoError]:
@@ -278,6 +338,7 @@ class MaicoController:
             control_result = self._dcam.get_subunit_control(i)
             wavelength_result = self._dcam.get_subunit_wavelength(i)
             power_result = self._dcam.get_subunit_laser_power(i)
+            gain_result = self._dcam.get_subunit_pmt_gain(i)
 
             if control_result.is_err():
                 continue
@@ -285,12 +346,14 @@ class MaicoController:
             control = control_result.unwrap()
             wavelength = wavelength_result.unwrap_or(0)
             power = power_result.unwrap_or(0)
+            gain = gain_result.unwrap_or(0.7)
 
             statuses.append(SubunitStatus(
                 index=i,
                 wavelength_nm=wavelength,
                 is_on=(control == DCAMSubunitControl.ON),
                 power_percent=power,
+                pmt_gain=gain,
                 is_installed=(control != DCAMSubunitControl.NOT_INSTALLED)
             ))
 
