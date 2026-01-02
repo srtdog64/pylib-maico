@@ -130,6 +130,85 @@ class MaicoController:
     ) -> Result[None, MaicoError]:
         return self._dcam.set_subunit_pmt_gain(subunit_index, gain)
 
+    # --- Multi-channel API (bypasses FSM) ---
+
+    def set_channel_enabled(
+        self, channel_index: int, enabled: bool
+    ) -> Result[None, MaicoError]:
+        """Enable/disable a specific laser channel (FSM-independent).
+
+        This method allows multiple channels to be ON simultaneously.
+        Use this for multi-channel operation instead of laser_on()/laser_off().
+
+        Args:
+            channel_index: Subunit index (0-based)
+            enabled: True to turn ON, False to turn OFF
+
+        Returns:
+            Result[None, MaicoError]
+        """
+        current_state = self._fsm.get_current_state()
+        if current_state not in (MaicoState.LASER_OFF, MaicoState.LASER_ON):
+            return Result.err(create_error(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                "Controller must be initialized before controlling channels",
+                current_state=current_state.name
+            ))
+
+        # Check if subunit is installed
+        control_check = self._dcam.get_subunit_control(channel_index)
+        if control_check.is_err():
+            return Result.err(control_check.unwrap_err())
+
+        if control_check.unwrap() == DCAMSubunitControl.NOT_INSTALLED:
+            return Result.err(create_error(
+                ErrorCode.SUBUNIT_NOT_INSTALLED,
+                "Subunit is not installed",
+                subunit_index=channel_index
+            ))
+
+        # Set subunit control
+        control = DCAMSubunitControl.ON if enabled else DCAMSubunitControl.OFF
+        control_result = self._dcam.set_subunit_control(channel_index, control)
+        if control_result.is_err():
+            return Result.err(control_result.unwrap_err())
+
+        # Update FSM state based on any channel being ON
+        self._update_laser_state()
+
+        return Result.ok(None)
+
+    def set_channel_power(
+        self, channel_index: int, power_percent: int
+    ) -> Result[None, MaicoError]:
+        """Set power for a specific channel.
+
+        Args:
+            channel_index: Subunit index (0-based)
+            power_percent: Power level (0-100)
+
+        Returns:
+            Result[None, MaicoError]
+        """
+        guard_result = self._guards.check_power_limit(power_percent)
+        if guard_result.is_err():
+            return Result.err(guard_result.unwrap_err())
+
+        return self._dcam.set_subunit_laser_power(channel_index, power_percent)
+
+    def _update_laser_state(self) -> None:
+        """Update FSM state and _is_laser_on based on actual channel states."""
+        statuses = self._get_all_subunit_statuses()
+        any_on = any(s.is_on for s in statuses)
+        self._is_laser_on = any_on
+
+        # Sync FSM state with actual hardware state
+        current_state = self._fsm.get_current_state()
+        if any_on and current_state == MaicoState.LASER_OFF:
+            self._fsm.transition(MaicoState.LASER_ON)
+        elif not any_on and current_state == MaicoState.LASER_ON:
+            self._fsm.transition(MaicoState.LASER_OFF)
+
     def get_scan_config(self) -> Result[ScanConfig, MaicoError]:
         mode_result = self._dcam.get_scan_mode()
         if mode_result.is_err():
