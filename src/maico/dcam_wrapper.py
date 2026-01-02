@@ -283,11 +283,16 @@ class DCAMWrapper:
     def get_subunit_control(self, subunit_index: int) -> Result[DCAMSubunitControl, MaicoError]:
         prop_id = DCAMPropertyID.SUBUNIT_CONTROL + (SUBUNIT_OFFSET * subunit_index)
         result = self.get_property(prop_id)
-        
+
         if result.is_err():
             return Result.err(result.unwrap_err())
 
-        return Result.ok(DCAMSubunitControl(int(result.unwrap())))
+        value = int(result.unwrap())
+        # Valid values: NOT_INSTALLED=0, OFF=1, ON=2
+        # Default to OFF for any unknown values from hardware
+        if value not in (0, 1, 2):
+            value = DCAMSubunitControl.OFF.value
+        return Result.ok(DCAMSubunitControl(value))
 
     def set_subunit_laser_power(
         self, subunit_index: int, power: int
