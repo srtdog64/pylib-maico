@@ -357,7 +357,11 @@ class DCAMWrapper:
         result = self.get_property(DCAMPropertyID.CONFOCAL_SCANMODE)
         if result.is_err():
             return Result.err(result.unwrap_err())
-        return Result.ok(DCAMScanMode(int(result.unwrap())))
+        value = int(result.unwrap())
+        # Default to SEQUENTIAL if hardware returns invalid value (0)
+        if value not in (1, 2):
+            value = DCAMScanMode.SEQUENTIAL.value
+        return Result.ok(DCAMScanMode(value))
 
     def set_scan_lines(self, lines: int) -> Result[None, MaicoError]:
         if lines not in (240, 480, 960):
