@@ -2,7 +2,7 @@ from enum import IntEnum
 
 
 def _int32(value: int) -> int:
-    if value &amp; (1 << 31):
+    if value & (1 << 31):
         value -= 1 << 32
     return value
 
