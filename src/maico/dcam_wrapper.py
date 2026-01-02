@@ -1,3 +1,4 @@
+import ctypes
 from typing import Any
 from .types import Result
 from .errors import MaicoError, ErrorCode, create_error
@@ -56,7 +57,7 @@ class DCAMWrapper:
             ))
 
         param = DCAMAPI_INIT()
-        param.size = len(param)
+        param.size = ctypes.sizeof(param)
         param.initoption = None
         param.guid = None
 
@@ -90,7 +91,7 @@ class DCAMWrapper:
             ))
 
         param = DCAMDEV_OPEN()
-        param.size = len(param)
+        param.size = ctypes.sizeof(param)
         param.index = device_index
 
         result = self._lib.dcamdev_open(param)
