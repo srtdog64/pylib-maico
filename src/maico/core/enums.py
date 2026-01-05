@@ -100,8 +100,8 @@ class DCAMOutputTriggerKind(IntEnum):
 
 
 class DCAMCaptureMode(IntEnum):
+    SEQUENCE = -1  # Must be -1 per official SDK (DCAMCAP_START.SEQUENCE)
     SNAP = 0
-    SEQUENCE = 1
 
 
 class DCAMSubunitControl(IntEnum):
