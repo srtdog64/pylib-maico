@@ -133,7 +133,7 @@ class MaicoController:
     # --- Multi-channel API (bypasses FSM) ---
 
     def set_channel_enabled(
-        self, channel_index: int, enabled: bool
+        self, channel_index: int, enabled: bool, power: int = 30
     ) -> Result[None, MaicoError]:
         """Enable/disable a specific laser channel (FSM-independent).
 
@@ -146,6 +146,7 @@ class MaicoController:
         Args:
             channel_index: Subunit index (0-based)
             enabled: True to turn ON, False to turn OFF
+            power: Power level (0-100) when enabling (default 30)
 
         Returns:
             Result[None, MaicoError]
@@ -170,6 +171,16 @@ class MaicoController:
                 subunit_index=channel_index
             ))
 
+        # When enabling: set power BEFORE cap_start (critical for laser output)
+        if enabled:
+            guard_result = self._guards.check_power_limit(power)
+            if guard_result.is_err():
+                return Result.err(guard_result.unwrap_err())
+
+            power_result = self._dcam.set_subunit_laser_power(channel_index, power)
+            if power_result.is_err():
+                return Result.err(power_result.unwrap_err())
+
         # Set subunit control
         control = DCAMSubunitControl.ON if enabled else DCAMSubunitControl.OFF
         control_result = self._dcam.set_subunit_control(channel_index, control)
@@ -177,6 +188,7 @@ class MaicoController:
             return Result.err(control_result.unwrap_err())
 
         # Update FSM state and manage capture based on channel states
+        # (cap_start is called here - power is already set above)
         self._update_laser_state_and_capture()
 
         return Result.ok(None)
