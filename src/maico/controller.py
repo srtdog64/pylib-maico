@@ -140,6 +140,9 @@ class MaicoController:
         This method allows multiple channels to be ON simultaneously.
         Use this for multi-channel operation instead of laser_on()/laser_off().
 
+        IMPORTANT: Laser physically outputs only when capture is running.
+        This method automatically manages capture start/stop.
+
         Args:
             channel_index: Subunit index (0-based)
             enabled: True to turn ON, False to turn OFF
@@ -173,8 +176,8 @@ class MaicoController:
         if control_result.is_err():
             return Result.err(control_result.unwrap_err())
 
-        # Update FSM state based on any channel being ON
-        self._update_laser_state()
+        # Update FSM state and manage capture based on channel states
+        self._update_laser_state_and_capture()
 
         return Result.ok(None)
 
@@ -196,11 +199,28 @@ class MaicoController:
 
         return self._dcam.set_subunit_laser_power(channel_index, power_percent)
 
-    def _update_laser_state(self) -> None:
-        """Update FSM state and _is_laser_on based on actual channel states."""
+    def _update_laser_state_and_capture(self) -> None:
+        """Update FSM state and manage capture based on channel states.
+
+        - When any channel turns ON: start capture (laser physically outputs)
+        - When all channels turn OFF: stop capture
+        """
         statuses = self._get_all_subunit_statuses()
         any_on = any(s.is_on for s in statuses)
+        was_on = self._is_laser_on
         self._is_laser_on = any_on
+
+        # Manage capture: laser only outputs when capture is running
+        if any_on and not was_on:
+            # First channel turned ON -> start capture
+            if not self._dcam.is_capture_running():
+                cap_result = self._dcam.cap_start()
+                if cap_result.is_err():
+                    print(f"[MaicoController] Warning: cap_start failed: {cap_result.unwrap_err()}")
+        elif not any_on and was_on:
+            # All channels turned OFF -> stop capture
+            if self._dcam.is_capture_running():
+                self._dcam.cap_stop()
 
         # Sync FSM state with actual hardware state
         current_state = self._fsm.get_current_state()
