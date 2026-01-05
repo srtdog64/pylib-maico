@@ -86,6 +86,62 @@ class MaicoController:
             self._guards.reset_error_count()
         return result
 
+    def start_capture(self) -> Result[None, MaicoError]:
+        """Start capture without changing laser state."""
+        current_state = self._fsm.get_current_state()
+        if current_state in (MaicoState.UNINITIALIZED, MaicoState.ERROR, MaicoState.SHUTDOWN):
+            return Result.err(create_error(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                "Cannot start capture from current state",
+                current_state=current_state.name
+            ))
+
+        return self._dcam.cap_start()
+
+    def stop_capture(self) -> Result[None, MaicoError]:
+        """Stop capture without changing laser state."""
+        if self._fsm.get_current_state() == MaicoState.UNINITIALIZED:
+            return Result.err(create_error(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                "Cannot stop capture before initialization"
+            ))
+
+        return self._dcam.cap_stop()
+
+    def all_lasers_off(self) -> Result[None, MaicoError]:
+        """Turn off all installed subunits and stop capture."""
+        if self._fsm.get_current_state() == MaicoState.UNINITIALIZED:
+            return Result.err(create_error(
+                ErrorCode.INVALID_STATE_TRANSITION,
+                "Cannot turn off lasers before initialization"
+            ))
+
+        stop_result = self._dcam.cap_stop()
+        if stop_result.is_err():
+            return stop_result
+
+        count_result = self._dcam.get_subunit_count()
+        if count_result.is_err():
+            return Result.err(count_result.unwrap_err())
+
+        for i in range(count_result.unwrap()):
+            control_result = self._dcam.get_subunit_control(i)
+            if control_result.is_err():
+                return Result.err(control_result.unwrap_err())
+
+            if control_result.unwrap() == DCAMSubunitControl.NOT_INSTALLED:
+                continue
+
+            off_result = self._dcam.set_subunit_control(i, DCAMSubunitControl.OFF)
+            if off_result.is_err():
+                return Result.err(off_result.unwrap_err())
+
+        self._is_laser_on = False
+        if self._fsm.get_current_state() == MaicoState.LASER_ON:
+            self._fsm.transition(MaicoState.LASER_OFF)
+
+        return Result.ok(None)
+
     def shutdown(self) -> Result[None, MaicoError]:
         if self._is_laser_on:
             laser_off_result = self.laser_off()
