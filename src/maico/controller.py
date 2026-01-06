@@ -13,7 +13,7 @@ from .errors import MaicoError, ErrorCode, create_error
 from .fsm import MaicoFSM
 from .guards import HardwareSafetyGuards
 from .dcam_wrapper import DCAMWrapper
-from .core import DCAMPropertyID, DCAMSubunitControl, DCAMScanMode
+from .core import DCAMERR, DCAMPropertyID, DCAMSubunitControl, DCAMScanMode
 
 
 class MaicoController:
@@ -255,19 +255,33 @@ class MaicoController:
             print(f"[MaicoController] Setting laser power: ch={channel_index}, power={power}", flush=True)
             power_result = self._dcam.set_subunit_laser_power(channel_index, power)
             if power_result.is_err():
-                print(f"[MaicoController] set_subunit_laser_power FAILED: {power_result.unwrap_err()}", flush=True)
-                return Result.err(power_result.unwrap_err())
+                power_err = power_result.unwrap_err()
+                if self._is_busy_error(power_err):
+                    print(f"[MaicoController] Laser power set BUSY, retrying after idle...", flush=True)
+                    self._force_idle_for_subunit_change()
+                    power_result = self._dcam.set_subunit_laser_power(channel_index, power)
+                if power_result.is_err():
+                    print(f"[MaicoController] set_subunit_laser_power FAILED: {power_result.unwrap_err()}", flush=True)
+                    if was_capturing:
+                        self._dcam.cap_start()
+                    return Result.err(power_result.unwrap_err())
 
         # Set subunit control
         control = DCAMSubunitControl.ON if enabled else DCAMSubunitControl.OFF
         print(f"[MaicoController] Setting subunit control: ch={channel_index}, control={control.name} ({control.value})", flush=True)
         control_result = self._dcam.set_subunit_control(channel_index, control)
         if control_result.is_err():
-            print(f"[MaicoController] set_subunit_control FAILED: {control_result.unwrap_err()}", flush=True)
-            # Restart capture if we stopped it
-            if was_capturing:
-                self._dcam.cap_start()
-            return Result.err(control_result.unwrap_err())
+            control_err = control_result.unwrap_err()
+            if self._is_busy_error(control_err):
+                print(f"[MaicoController] Subunit control BUSY, retrying after idle...", flush=True)
+                self._force_idle_for_subunit_change()
+                control_result = self._dcam.set_subunit_control(channel_index, control)
+            if control_result.is_err():
+                print(f"[MaicoController] set_subunit_control FAILED: {control_result.unwrap_err()}", flush=True)
+                # Restart capture if we stopped it
+                if was_capturing:
+                    self._dcam.cap_start()
+                return Result.err(control_result.unwrap_err())
 
         # Update FSM state and manage capture based on channel states
         # (cap_start is called here - power is already set above)
@@ -276,6 +290,31 @@ class MaicoController:
 
         print(f"[MaicoController] set_channel_enabled completed successfully", flush=True)
         return Result.ok(None)
+
+    def _is_busy_error(self, err: MaicoError) -> bool:
+        if not err.context:
+            return False
+        dcam_error = err.context.get("dcam_error")
+        if dcam_error is None:
+            return False
+        try:
+            value = int(dcam_error)
+        except (TypeError, ValueError):
+            return False
+        if value == DCAMERR.BUSY:
+            return True
+        return (value & 0xFFFFFFFF) == (int(DCAMERR.BUSY) & 0xFFFFFFFF)
+
+    def _force_idle_for_subunit_change(self) -> None:
+        """Attempt to idle device before subunit property changes (handles BUSY)."""
+        if self._dcam.is_capture_running():
+            stop_result = self._dcam.cap_stop()
+            if stop_result.is_err():
+                print(f"[MaicoController] cap_stop FAILED during idle: {stop_result.unwrap_err()}", flush=True)
+        if self._dcam.is_buffer_allocated():
+            release_result = self._dcam.buf_release()
+            if release_result.is_err():
+                print(f"[MaicoController] buf_release FAILED during idle: {release_result.unwrap_err()}", flush=True)
 
     def set_channel_power(
         self, channel_index: int, power_percent: int
