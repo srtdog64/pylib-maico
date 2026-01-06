@@ -207,8 +207,12 @@ class MaicoController:
         Returns:
             Result[None, MaicoError]
         """
+        print(f"[MaicoController] set_channel_enabled(ch={channel_index}, en={enabled}, pwr={power})")
+
         current_state = self._fsm.get_current_state()
+        print(f"[MaicoController] Current FSM state: {current_state.name}")
         if current_state not in (MaicoState.LASER_OFF, MaicoState.LASER_ON):
+            print(f"[MaicoController] Invalid state for laser control: {current_state.name}")
             return Result.err(create_error(
                 ErrorCode.INVALID_STATE_TRANSITION,
                 "Controller must be initialized before controlling channels",
@@ -218,9 +222,14 @@ class MaicoController:
         # Check if subunit is installed
         control_check = self._dcam.get_subunit_control(channel_index)
         if control_check.is_err():
+            print(f"[MaicoController] get_subunit_control FAILED: {control_check.unwrap_err()}")
             return Result.err(control_check.unwrap_err())
 
-        if control_check.unwrap() == DCAMSubunitControl.NOT_INSTALLED:
+        current_control = control_check.unwrap()
+        print(f"[MaicoController] Subunit {channel_index} status: {current_control.name} ({current_control.value})")
+
+        if current_control == DCAMSubunitControl.NOT_INSTALLED:
+            print(f"[MaicoController] Subunit {channel_index} NOT_INSTALLED")
             return Result.err(create_error(
                 ErrorCode.SUBUNIT_NOT_INSTALLED,
                 "Subunit is not installed",
@@ -233,20 +242,26 @@ class MaicoController:
             if guard_result.is_err():
                 return Result.err(guard_result.unwrap_err())
 
+            print(f"[MaicoController] Setting laser power: ch={channel_index}, power={power}")
             power_result = self._dcam.set_subunit_laser_power(channel_index, power)
             if power_result.is_err():
+                print(f"[MaicoController] set_subunit_laser_power FAILED: {power_result.unwrap_err()}")
                 return Result.err(power_result.unwrap_err())
 
         # Set subunit control
         control = DCAMSubunitControl.ON if enabled else DCAMSubunitControl.OFF
+        print(f"[MaicoController] Setting subunit control: ch={channel_index}, control={control.name} ({control.value})")
         control_result = self._dcam.set_subunit_control(channel_index, control)
         if control_result.is_err():
+            print(f"[MaicoController] set_subunit_control FAILED: {control_result.unwrap_err()}")
             return Result.err(control_result.unwrap_err())
 
         # Update FSM state and manage capture based on channel states
         # (cap_start is called here - power is already set above)
+        print(f"[MaicoController] Updating laser state and capture...")
         self._update_laser_state_and_capture()
 
+        print(f"[MaicoController] set_channel_enabled completed successfully")
         return Result.ok(None)
 
     def set_channel_power(
@@ -278,24 +293,34 @@ class MaicoController:
         was_on = self._is_laser_on
         self._is_laser_on = any_on
 
+        print(f"[MaicoController] _update: any_on={any_on}, was_on={was_on}, "
+              f"capture_running={self._dcam.is_capture_running()}, "
+              f"buffer_alloc={self._dcam.is_buffer_allocated()}")
+
         # Manage capture: laser only outputs when capture is running
         if any_on and not was_on:
             # First channel turned ON -> start capture
             if not self._dcam.is_capture_running():
+                print(f"[MaicoController] Starting capture (laser needs capture to output)...")
                 cap_result = self._dcam.cap_start()
                 if cap_result.is_err():
-                    print(f"[MaicoController] Warning: cap_start failed: {cap_result.unwrap_err()}")
+                    print(f"[MaicoController] cap_start FAILED: {cap_result.unwrap_err()}")
+                else:
+                    print(f"[MaicoController] cap_start SUCCESS")
         elif not any_on and was_on:
             # All channels turned OFF -> stop capture
             if self._dcam.is_capture_running():
+                print(f"[MaicoController] Stopping capture...")
                 self._dcam.cap_stop()
 
         # Sync FSM state with actual hardware state
         current_state = self._fsm.get_current_state()
         if any_on and current_state == MaicoState.LASER_OFF:
             self._fsm.transition(MaicoState.LASER_ON)
+            print(f"[MaicoController] FSM transition: LASER_OFF -> LASER_ON")
         elif not any_on and current_state == MaicoState.LASER_ON:
             self._fsm.transition(MaicoState.LASER_OFF)
+            print(f"[MaicoController] FSM transition: LASER_ON -> LASER_OFF")
 
     def get_scan_config(self) -> Result[ScanConfig, MaicoError]:
         mode_result = self._dcam.get_scan_mode()
@@ -362,9 +387,15 @@ class MaicoController:
         return handler()
 
     def _execute_initialize(self) -> Result[None, MaicoError]:
+        print(f"[MaicoController] _execute_initialize() starting...")
+        print(f"[MaicoController] Config: sim={self._config.simulation_mode}, "
+              f"trigger={self._config.trigger_source.name}, device={self._config.device_index}")
+
         init_result = self._dcam.initialize()
         if init_result.is_err():
+            print(f"[MaicoController] DCAM initialize FAILED: {init_result.unwrap_err()}")
             return Result.err(init_result.unwrap_err())
+        print(f"[MaicoController] DCAM initialized")
 
         transition_result = self._fsm.transition(MaicoState.INITIALIZED)
         if transition_result.is_err():
@@ -372,7 +403,9 @@ class MaicoController:
 
         open_result = self._dcam.open_device(self._config.device_index)
         if open_result.is_err():
+            print(f"[MaicoController] open_device FAILED: {open_result.unwrap_err()}")
             return Result.err(open_result.unwrap_err())
+        print(f"[MaicoController] Device opened")
 
         transition_result = self._fsm.transition(MaicoState.READY)
         if transition_result.is_err():
@@ -380,14 +413,19 @@ class MaicoController:
 
         config_result = self._configure_hardware()
         if config_result.is_err():
+            print(f"[MaicoController] _configure_hardware FAILED: {config_result.unwrap_err()}")
             return Result.err(config_result.unwrap_err())
+        print(f"[MaicoController] Hardware configured")
 
         transition_result = self._fsm.transition(MaicoState.LASER_OFF)
+        if transition_result.is_ok():
+            print(f"[MaicoController] Initialization complete, state=LASER_OFF")
         return Result.ok(None) if transition_result.is_ok() else Result.err(
             transition_result.unwrap_err()
         )
 
     def _configure_hardware(self) -> Result[None, MaicoError]:
+        print(f"[MaicoController] Setting trigger source: {self._config.trigger_source.name} ({self._config.trigger_source.value})")
         trigger_result = self._dcam.set_property(
             DCAMPropertyID.TRIGGERSOURCE,
             float(self._config.trigger_source.value)
@@ -395,6 +433,7 @@ class MaicoController:
         if trigger_result.is_err():
             return Result.err(trigger_result.unwrap_err())
 
+        print(f"[MaicoController] Setting output trigger: {self._config.output_trigger_kind.name}")
         output_result = self._dcam.set_property(
             DCAMPropertyID.OUTPUTTRIGGER_KIND,
             float(self._config.output_trigger_kind.value)

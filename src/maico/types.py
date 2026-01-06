@@ -76,7 +76,7 @@ class SubunitConfig:
 @dataclass(frozen=True)
 class MaicoConfig:
     device_index: int = 0
-    trigger_source: TriggerSource = TriggerSource.SOFTWARE
+    trigger_source: TriggerSource = TriggerSource.INTERNAL  # INTERNAL for continuous scanning
     output_trigger_kind: OutputTriggerKind = OutputTriggerKind.EXPOSURE
     exposure_time_ms: float = 10.0
     max_power_percent: int = 100
