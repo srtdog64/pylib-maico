@@ -425,36 +425,46 @@ class MaicoController:
         )
 
     def _configure_hardware(self) -> Result[None, MaicoError]:
+        # Trigger source setting (optional - some devices may not support)
         print(f"[MaicoController] Setting trigger source: {self._config.trigger_source.name} ({self._config.trigger_source.value})")
         trigger_result = self._dcam.set_property(
             DCAMPropertyID.TRIGGERSOURCE,
             float(self._config.trigger_source.value)
         )
         if trigger_result.is_err():
-            return Result.err(trigger_result.unwrap_err())
+            # Non-fatal: some confocal scanners don't expose trigger source property
+            print(f"[MaicoController] Warning: trigger source not supported (skipping)")
 
+        # Output trigger setting (optional - C15890 doesn't support this)
         print(f"[MaicoController] Setting output trigger: {self._config.output_trigger_kind.name}")
         output_result = self._dcam.set_property(
             DCAMPropertyID.OUTPUTTRIGGER_KIND,
             float(self._config.output_trigger_kind.value)
         )
         if output_result.is_err():
-            return Result.err(output_result.unwrap_err())
+            # Non-fatal: C15890 confocal scanner doesn't have output trigger
+            print(f"[MaicoController] Warning: output trigger not supported (skipping)")
 
+        # Exposure time setting (optional)
         exposure_ms = self._config.exposure_time_ms
         guard_result = self._guards.check_exposure_time(exposure_ms)
         if guard_result.is_err():
             return Result.err(guard_result.unwrap_err())
 
+        print(f"[MaicoController] Setting exposure time: {exposure_ms}ms")
         exposure_result = self._dcam.set_property(
             DCAMPropertyID.EXPOSURETIME,
             exposure_ms / 1000.0
         )
         if exposure_result.is_err():
-            return Result.err(exposure_result.unwrap_err())
+            # Non-fatal: exposure might be fixed on some devices
+            print(f"[MaicoController] Warning: exposure time not settable (skipping)")
 
+        # Buffer allocation (required)
+        print(f"[MaicoController] Allocating {self._config.buffer_frame_count} frame buffers...")
         alloc_result = self._dcam.buf_alloc(self._config.buffer_frame_count)
         if alloc_result.is_err():
+            print(f"[MaicoController] buf_alloc FAILED: {alloc_result.unwrap_err()}")
             return Result.err(alloc_result.unwrap_err())
 
         return Result.ok(None)
