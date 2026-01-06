@@ -47,10 +47,13 @@ class DCAMWrapper:
         return Result.ok(None)
 
     def initialize(self) -> Result[int, MaicoError]:
+        print(f"[DCAMWrapper] initialize(sim={self._simulation_mode})", flush=True)
         if self._is_initialized:
+            print(f"[DCAMWrapper] already initialized, skipping", flush=True)
             return Result.ok(0)
 
         if self._lib is None:
+            print(f"[DCAMWrapper] initialize FAILED: library not loaded", flush=True)
             return Result.err(create_error(
                 ErrorCode.DCAM_NOT_INITIALIZED,
                 "DCAM library not loaded (simulation mode available)"
@@ -61,10 +64,13 @@ class DCAMWrapper:
         param.initoption = None
         param.guid = None
 
+        print(f"[DCAMWrapper] calling dcamapi_init...", flush=True)
         result = self._lib.dcamapi_init(param)
+        print(f"[DCAMWrapper] dcamapi_init returned: {result}, device_count={param.iDeviceCount}", flush=True)
         status_check = self._check_status(result)
-        
+
         if status_check.is_err():
+            print(f"[DCAMWrapper] initialize FAILED: {result}", flush=True)
             return Result.err(create_error(
                 ErrorCode.DCAM_INIT_FAILED,
                 "Failed to initialize DCAM-API",
@@ -73,6 +79,7 @@ class DCAMWrapper:
             ))
 
         self._is_initialized = True
+        print(f"[DCAMWrapper] initialize SUCCESS, device_count={param.iDeviceCount}", flush=True)
         return Result.ok(param.iDeviceCount)
 
     def uninitialize(self) -> Result[None, MaicoError]:
@@ -84,7 +91,9 @@ class DCAMWrapper:
         return self._check_status(result)
 
     def open_device(self, device_index: int) -> Result[None, MaicoError]:
+        print(f"[DCAMWrapper] open_device(index={device_index})", flush=True)
         if not self._is_initialized:
+            print(f"[DCAMWrapper] open_device FAILED: not initialized", flush=True)
             return Result.err(create_error(
                 ErrorCode.DCAM_NOT_INITIALIZED,
                 "DCAM-API not initialized"
@@ -94,17 +103,22 @@ class DCAMWrapper:
         param.size = ctypes.sizeof(param)
         param.index = device_index
 
+        print(f"[DCAMWrapper] calling dcamdev_open...", flush=True)
         result = self._lib.dcamdev_open(param)
+        print(f"[DCAMWrapper] dcamdev_open returned: {result}", flush=True)
         status_check = self._check_status(result)
-        
+
         if status_check.is_err():
+            print(f"[DCAMWrapper] open_device FAILED: result={result}", flush=True)
             return Result.err(create_error(
                 ErrorCode.DEVICE_OPEN_FAILED,
                 "Failed to open DCAM device",
-                device_index=device_index
+                device_index=device_index,
+                dcam_error=result
             ))
 
         self._hdcam = param.hdcam
+        print(f"[DCAMWrapper] open_device SUCCESS, hdcam={self._hdcam}", flush=True)
         return Result.ok(None)
 
     def close_device(self) -> Result[None, MaicoError]:
@@ -179,20 +193,26 @@ class DCAMWrapper:
         return Result.ok(None)
 
     def buf_alloc(self, frame_count: int = 3) -> Result[None, MaicoError]:
+        print(f"[DCAMWrapper] buf_alloc(count={frame_count})", flush=True)
         if self._hdcam is None:
+            print(f"[DCAMWrapper] buf_alloc FAILED: device not opened", flush=True)
             return Result.err(create_error(
                 ErrorCode.DEVICE_NOT_FOUND,
                 "Device not opened"
             ))
 
         if self._buffer_allocated:
+            print(f"[DCAMWrapper] buf_alloc: releasing existing buffer first...", flush=True)
             release_result = self.buf_release()
             if release_result.is_err():
                 return release_result
 
+        print(f"[DCAMWrapper] calling dcambuf_alloc...", flush=True)
         result = self._lib.dcambuf_alloc(self._hdcam, frame_count)
-        
+        print(f"[DCAMWrapper] dcambuf_alloc returned: {result}", flush=True)
+
         if result != DCAMERR.SUCCESS:
+            print(f"[DCAMWrapper] buf_alloc FAILED: {result}", flush=True)
             return Result.err(create_error(
                 ErrorCode.BUFFER_ALLOC_FAILED,
                 "Failed to allocate image buffer",
@@ -201,6 +221,7 @@ class DCAMWrapper:
             ))
 
         self._buffer_allocated = True
+        print(f"[DCAMWrapper] buf_alloc SUCCESS", flush=True)
         return Result.ok(None)
 
     def buf_release(self) -> Result[None, MaicoError]:
@@ -228,20 +249,27 @@ class DCAMWrapper:
     def cap_start(
         self, mode: DCAMCaptureMode = DCAMCaptureMode.SEQUENCE
     ) -> Result[None, MaicoError]:
+        print(f"[DCAMWrapper] cap_start(mode={mode.name})", flush=True)
         if self._hdcam is None:
+            print(f"[DCAMWrapper] cap_start FAILED: device not opened", flush=True)
             return Result.err(create_error(
                 ErrorCode.DEVICE_NOT_FOUND,
                 "Device not opened"
             ))
 
         if not self._buffer_allocated:
+            print(f"[DCAMWrapper] cap_start: auto-allocating buffer...", flush=True)
             alloc_result = self.buf_alloc()
             if alloc_result.is_err():
+                print(f"[DCAMWrapper] cap_start FAILED: buffer alloc failed", flush=True)
                 return alloc_result
 
+        print(f"[DCAMWrapper] calling dcamcap_start(mode={mode.value})...", flush=True)
         result = self._lib.dcamcap_start(self._hdcam, mode.value)
-        
+        print(f"[DCAMWrapper] dcamcap_start returned: {result}", flush=True)
+
         if result != DCAMERR.SUCCESS:
+            print(f"[DCAMWrapper] cap_start FAILED: {result}", flush=True)
             return Result.err(create_error(
                 ErrorCode.CAPTURE_START_FAILED,
                 "Failed to start capture",
@@ -250,6 +278,7 @@ class DCAMWrapper:
             ))
 
         self._capture_running = True
+        print(f"[DCAMWrapper] cap_start SUCCESS", flush=True)
         return Result.ok(None)
 
     def cap_stop(self) -> Result[None, MaicoError]:
@@ -278,7 +307,13 @@ class DCAMWrapper:
         self, subunit_index: int, control: DCAMSubunitControl
     ) -> Result[None, MaicoError]:
         prop_id = DCAMPropertyID.SUBUNIT_CONTROL + (SUBUNIT_OFFSET * subunit_index)
-        return self.set_property(prop_id, float(control.value))
+        print(f"[DCAMWrapper] set_subunit_control(idx={subunit_index}, ctrl={control.name}={control.value}, prop_id={hex(prop_id)})", flush=True)
+        result = self.set_property(prop_id, float(control.value))
+        if result.is_ok():
+            print(f"[DCAMWrapper] set_subunit_control SUCCESS", flush=True)
+        else:
+            print(f"[DCAMWrapper] set_subunit_control FAILED: {result.unwrap_err()}", flush=True)
+        return result
 
     def get_subunit_control(self, subunit_index: int) -> Result[DCAMSubunitControl, MaicoError]:
         prop_id = DCAMPropertyID.SUBUNIT_CONTROL + (SUBUNIT_OFFSET * subunit_index)
