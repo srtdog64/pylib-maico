@@ -1,4 +1,5 @@
 from typing import Callable
+import time
 from .types import (
     Result,
     MaicoState,
@@ -236,14 +237,9 @@ class MaicoController:
                 subunit_index=channel_index
             ))
 
-        # C15890 requires capture to be stopped before changing subunit properties
+        # C15890 requires capture/buffer to be idle before changing subunit properties
         was_capturing = self._dcam.is_capture_running()
-        if was_capturing:
-            print(f"[MaicoController] Stopping capture before property change (C15890 requirement)...", flush=True)
-            stop_result = self._dcam.cap_stop()
-            if stop_result.is_err():
-                print(f"[MaicoController] cap_stop FAILED: {stop_result.unwrap_err()}", flush=True)
-                # Continue anyway, might still work
+        self._force_idle_for_subunit_change()
 
         # When enabling: set power BEFORE cap_start (critical for laser output)
         if enabled:
@@ -253,35 +249,26 @@ class MaicoController:
                 return Result.err(guard_result.unwrap_err())
 
             print(f"[MaicoController] Setting laser power: ch={channel_index}, power={power}", flush=True)
-            power_result = self._dcam.set_subunit_laser_power(channel_index, power)
+            power_result = self._retry_on_busy(
+                lambda: self._dcam.set_subunit_laser_power(channel_index, power),
+                action_name="Laser power set",
+            )
             if power_result.is_err():
-                power_err = power_result.unwrap_err()
-                if self._is_busy_error(power_err):
-                    print(f"[MaicoController] Laser power set BUSY, retrying after idle...", flush=True)
-                    self._force_idle_for_subunit_change()
-                    power_result = self._dcam.set_subunit_laser_power(channel_index, power)
-                if power_result.is_err():
-                    print(f"[MaicoController] set_subunit_laser_power FAILED: {power_result.unwrap_err()}", flush=True)
-                    if was_capturing:
-                        self._dcam.cap_start()
-                    return Result.err(power_result.unwrap_err())
+                print(f"[MaicoController] set_subunit_laser_power FAILED: {power_result.unwrap_err()}", flush=True)
+                self._restore_capture_after_change(was_capturing)
+                return Result.err(power_result.unwrap_err())
 
         # Set subunit control
         control = DCAMSubunitControl.ON if enabled else DCAMSubunitControl.OFF
         print(f"[MaicoController] Setting subunit control: ch={channel_index}, control={control.name} ({control.value})", flush=True)
-        control_result = self._dcam.set_subunit_control(channel_index, control)
+        control_result = self._retry_on_busy(
+            lambda: self._dcam.set_subunit_control(channel_index, control),
+            action_name="Subunit control",
+        )
         if control_result.is_err():
-            control_err = control_result.unwrap_err()
-            if self._is_busy_error(control_err):
-                print(f"[MaicoController] Subunit control BUSY, retrying after idle...", flush=True)
-                self._force_idle_for_subunit_change()
-                control_result = self._dcam.set_subunit_control(channel_index, control)
-            if control_result.is_err():
-                print(f"[MaicoController] set_subunit_control FAILED: {control_result.unwrap_err()}", flush=True)
-                # Restart capture if we stopped it
-                if was_capturing:
-                    self._dcam.cap_start()
-                return Result.err(control_result.unwrap_err())
+            print(f"[MaicoController] set_subunit_control FAILED: {control_result.unwrap_err()}", flush=True)
+            self._restore_capture_after_change(was_capturing)
+            return Result.err(control_result.unwrap_err())
 
         # Update FSM state and manage capture based on channel states
         # (cap_start is called here - power is already set above)
@@ -315,6 +302,33 @@ class MaicoController:
             release_result = self._dcam.buf_release()
             if release_result.is_err():
                 print(f"[MaicoController] buf_release FAILED during idle: {release_result.unwrap_err()}", flush=True)
+
+    def _retry_on_busy(
+        self,
+        op: Callable[[], Result[None, MaicoError]],
+        action_name: str,
+        retries: int = 3,
+        delay_s: float = 0.05,
+    ) -> Result[None, MaicoError]:
+        result = op()
+        for _ in range(retries):
+            if result.is_ok():
+                return result
+            err = result.unwrap_err()
+            if not self._is_busy_error(err):
+                return result
+            print(f"[MaicoController] {action_name} BUSY, retrying after idle...", flush=True)
+            self._force_idle_for_subunit_change()
+            time.sleep(delay_s)
+            result = op()
+        return result
+
+    def _restore_capture_after_change(self, was_capturing: bool) -> None:
+        """Restore capture if needed after a failed property change."""
+        if was_capturing:
+            self._dcam.cap_start()
+        else:
+            self._update_laser_state_and_capture()
 
     def set_channel_power(
         self, channel_index: int, power_percent: int
