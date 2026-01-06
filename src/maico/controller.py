@@ -236,6 +236,15 @@ class MaicoController:
                 subunit_index=channel_index
             ))
 
+        # C15890 requires capture to be stopped before changing subunit properties
+        was_capturing = self._dcam.is_capture_running()
+        if was_capturing:
+            print(f"[MaicoController] Stopping capture before property change (C15890 requirement)...", flush=True)
+            stop_result = self._dcam.cap_stop()
+            if stop_result.is_err():
+                print(f"[MaicoController] cap_stop FAILED: {stop_result.unwrap_err()}", flush=True)
+                # Continue anyway, might still work
+
         # When enabling: set power BEFORE cap_start (critical for laser output)
         if enabled:
             guard_result = self._guards.check_power_limit(power)
@@ -255,6 +264,9 @@ class MaicoController:
         control_result = self._dcam.set_subunit_control(channel_index, control)
         if control_result.is_err():
             print(f"[MaicoController] set_subunit_control FAILED: {control_result.unwrap_err()}", flush=True)
+            # Restart capture if we stopped it
+            if was_capturing:
+                self._dcam.cap_start()
             return Result.err(control_result.unwrap_err())
 
         # Update FSM state and manage capture based on channel states
@@ -299,8 +311,9 @@ class MaicoController:
               f"buffer_alloc={self._dcam.is_buffer_allocated()}", flush=True)
 
         # Manage capture: laser only outputs when capture is running
-        if any_on and not was_on:
-            # First channel turned ON -> start capture
+        # Always restart capture if any channel is ON and capture not running
+        # (handles case where capture was stopped for property changes)
+        if any_on:
             if not self._dcam.is_capture_running():
                 print(f"[MaicoController] Starting capture (laser needs capture to output)...", flush=True)
                 cap_result = self._dcam.cap_start()
@@ -308,7 +321,7 @@ class MaicoController:
                     print(f"[MaicoController] cap_start FAILED: {cap_result.unwrap_err()}", flush=True)
                 else:
                     print(f"[MaicoController] cap_start SUCCESS", flush=True)
-        elif not any_on and was_on:
+        elif was_on:
             # All channels turned OFF -> stop capture
             if self._dcam.is_capture_running():
                 print(f"[MaicoController] Stopping capture...", flush=True)
